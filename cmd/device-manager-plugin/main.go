@@ -7,6 +7,9 @@ import (
 	"sync"
 	"syscall"
 
+	cfg "github.com/geoff-coppertop/device-manager-plugin/internal/config"
+	fnd "github.com/geoff-coppertop/device-manager-plugin/internal/device-finder"
+	srv "github.com/geoff-coppertop/device-manager-plugin/internal/device-plugin-server"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -15,22 +18,48 @@ func main() {
 		FullTimestamp: true,
 	})
 
-	/* Get configuration */
-
 	// log.SetLevel(cfg.Debug)
 	log.Info("Starting")
 
 	// log.Debug(cfg)
 
-	// ctx, cancel := context.WithCancel(context.Background())
-	_, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
 
 	/* do the things */
+	cfg, err := cfg.ParseConfig("config/config.yml")
+	if err != nil {
+		// log.Error("Oh shit")
+		cancel()
+	}
+	log.Debugf("\nConfig\n------\n%s", cfg.String())
 
-	WaitProcess(&wg, nil, cancel)
+	devMappings, err := fnd.GenerateDeviceMapping(cfg)
+	if err != nil {
+		cancel()
+	}
+
+	var pluginServers []*srv.DevicePluginServer
+
+	for _, devMap := range devMappings {
+		dps := srv.NewDevicePluginServer(&wg, ctx, devMap.Paths, devMap.Group)
+		if err = dps.Start(); err != nil {
+			cancel()
+			break
+		}
+
+		pluginServers = append(pluginServers, dps)
+	}
+
+	WaitProcess(&wg, ctx.Done(), cancel)
+
+	for _, dps := range pluginServers {
+		if err = dps.Stop(); err != nil {
+			log.Error(err)
+		}
+	}
 }
 
 func WaitProcess(wg *sync.WaitGroup, ch <-chan struct{}, cancel context.CancelFunc) {

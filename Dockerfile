@@ -16,6 +16,7 @@ LABEL org.opencontainers.image.source https://github.com/geoff-coppertop/device-
 
 COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=go-builder /device-manager-plugin/out/device-manager-plugin /
+COPY config.yml /config/config.yml
 
 # Run
 CMD ["/device-manager-plugin"]

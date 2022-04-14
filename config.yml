@@ -1,0 +1,9 @@
+---
+debug: Info
+matchers:
+  - match:
+      - ^rtl_sdr$
+    group: rtl_sdr
+  - match:
+      - ^zigbee
+search: /dev
