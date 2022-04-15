@@ -55,7 +55,6 @@ func findDevices(root string) (devices []string, err error) {
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				log.Warn(err)
-				// return err
 				return nil
 			}
 
@@ -65,8 +64,8 @@ func findDevices(root string) (devices []string, err error) {
 				// Found symlink, follow it and see if it's pointing at a device directly
 				symPath, err := os.Readlink(path)
 				if err != nil {
-					log.Warn("bad symlink")
-					return err
+					log.Warnf("Bad symlink: %v", err)
+					return nil
 				}
 
 				symPath = filepath.Join(filepath.Dir(path), symPath)
@@ -74,19 +73,17 @@ func findDevices(root string) (devices []string, err error) {
 
 				info, err = os.Stat(symPath)
 				if err != nil {
-					log.Info("Bad stat")
-					return err
+					log.Warnf("Bad stat: %v", err)
+					return nil
 				}
 
 				if info.Mode()&fs.ModeDevice != 0 {
-					// log.Infof("Found: %s", path)
 					devices = append(devices, path)
 				} else {
 					log.Tracef("Ignoring: %s", path)
 				}
 
 			case mode&fs.ModeDevice != 0:
-				// log.Infof("Found: %s", path)
 				devices = append(devices, path)
 			default:
 				log.Tracef("Ignoring: %s", path)
@@ -95,10 +92,11 @@ func findDevices(root string) (devices []string, err error) {
 			return nil
 		})
 	if err != nil {
-		log.Warnf("Oh fuck: %v", err)
+		log.Warnf("Directory walk failed: %v", err)
+		return nil, err
 	}
 
-	return devices, err
+	return devices, nil
 }
 
 func filterDevices(unfilteredDevices []string, patterns []string) (filteredDevices []string, err error) {
