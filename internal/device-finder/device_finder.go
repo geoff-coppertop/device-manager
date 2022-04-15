@@ -68,8 +68,11 @@ func findDevices(root string) (devices []string, err error) {
 					return nil
 				}
 
-				symPath = filepath.Join(filepath.Dir(path), symPath)
-				log.Tracef("Sympath: %s", symPath)
+				symPath, err = filepath.Abs(symPath)
+				if err != nil {
+					log.Warnf("Bad abs: %v", err)
+					return nil
+				}
 
 				info, err = os.Stat(symPath)
 				if err != nil {
