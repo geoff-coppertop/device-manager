@@ -101,9 +101,9 @@ func (m *DevicePluginServer) Start() (err error) {
 }
 
 func (m *DevicePluginServer) Stop() error {
-	log.Info("Stopping socket server")
-
 	if m.server != nil {
+		log.Info("Stopping socket server")
+
 		m.server.Stop()
 		m.server = nil
 
@@ -132,16 +132,16 @@ func (m *DevicePluginServer) setupDeviceWatcher() (err error) {
 		return err
 	}
 
-	for _, device := range m.devices {
-		log.Infof("Adding watch on: %s", device.path)
+	// for _, device := range m.devices {
+	// 	log.Infof("Adding watch on: %s", device.path)
 
-		err = m.deviceWatcher.Add(device.path)
-		if err != nil {
-			log.Warnf("Failed to setup watcher: %v", err)
-			m.deviceWatcher.Close()
-			return err
-		}
-	}
+	// 	err = m.deviceWatcher.Add(device.path)
+	// 	if err != nil {
+	// 		log.Warnf("Failed to setup watcher: %v", err)
+	// 		m.deviceWatcher.Close()
+	// 		return err
+	// 	}
+	// }
 
 	return nil
 }
