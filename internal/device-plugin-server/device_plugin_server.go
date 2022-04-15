@@ -56,6 +56,9 @@ func NewDevicePluginServer(wg *sync.WaitGroup, ctx context.Context, devicePaths 
 		wg:            wg,
 	}
 
+	log.Infof("%s has %d paths", srv.resourceName, len(devicePaths))
+	log.Infof("Paths: %s", devicePaths)
+
 	for _, path := range devicePaths {
 		srv.devices = append(srv.devices, Device{
 			device: &pluginapi.Device{
@@ -65,6 +68,8 @@ func NewDevicePluginServer(wg *sync.WaitGroup, ctx context.Context, devicePaths 
 			path: path,
 		})
 	}
+
+	log.Infof("%s has %d devices", srv.resourceName, len(srv.devices))
 
 	return &srv
 }
@@ -221,6 +226,8 @@ func (m *DevicePluginServer) register() error {
 }
 
 func (m *DevicePluginServer) getDeviceList() (devs []*pluginapi.Device) {
+	log.Infof("There are %d devce(s)", len(m.devices))
+
 	for _, dev := range m.devices {
 		devs = append(devs, dev.device)
 	}
