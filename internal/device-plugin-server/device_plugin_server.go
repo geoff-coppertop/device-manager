@@ -137,6 +137,7 @@ func (m *DevicePluginServer) setupDeviceWatcher() (err error) {
 
 		err = m.deviceWatcher.Add(device.path)
 		if err != nil {
+			log.Warnf("Failed to setup watcher: %v", err)
 			m.deviceWatcher.Close()
 			return err
 		}
