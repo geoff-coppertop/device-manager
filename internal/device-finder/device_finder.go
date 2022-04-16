@@ -36,7 +36,7 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 			devMap = append(devMap, DeviceMap{Paths: filteredDevs, Group: group})
 		} else {
 			for _, dev := range filteredDevs {
-				group := sanitizeName(devMatch.Group)
+				group := sanitizeName(strings.TrimPrefix(dev, "/dev"))
 
 				devMap = append(devMap, DeviceMap{Paths: []string{dev}, Group: group})
 			}

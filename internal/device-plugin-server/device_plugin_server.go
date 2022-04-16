@@ -50,7 +50,7 @@ func NewDevicePluginServer(wg *sync.WaitGroup, ctx context.Context, devicePaths 
 	srv := DevicePluginServer{
 		deviceWatcher: nil,
 		resourceName:  "device-plugin-server/" + deviceGroupName,
-		socket:        pluginapi.DevicePluginPath + "dps" + deviceGroupName + ".sock",
+		socket:        pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
 		context:       cancelCtx,
 		cancel:        cancel,
 		wg:            wg,
@@ -216,7 +216,7 @@ func (m *DevicePluginServer) register() error {
 		ResourceName: m.resourceName,
 	}
 
-	log.Info("Registering device plusing")
+	log.Info("Registering device plugin")
 
 	_, err = client.Register(m.context, req)
 	if err != nil {
