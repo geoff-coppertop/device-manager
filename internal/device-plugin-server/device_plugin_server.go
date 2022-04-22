@@ -238,15 +238,25 @@ func (m *DevicePluginServer) getDeviceList() (devs []*pluginapi.Device) {
 	return devs
 }
 
-func (m *DevicePluginServer) getDeviceHealth(path string) (string, error) {
+func (m *DevicePluginServer) getDeviceByPath(path string) (Device, error) {
 	for _, dev := range m.devices {
 		if dev.path == path {
-			health := dev.device.GetHealth()
-			log.Infof("Device: %s, is: %s", path, health)
-			return health, nil
+			return dev, nil
 		}
 	}
-	return "", fmt.Errorf("device not found")
+
+	return Device{}, fmt.Errorf("device not found")
+}
+
+func (m *DevicePluginServer) getDeviceHealth(path string) (string, error) {
+	dev, err := m.getDeviceByPath(path)
+	if err != nil {
+		return "", err
+	}
+
+	health := dev.device.GetHealth()
+	log.Infof("Device: %s, is: %s", path, health)
+	return health, nil
 }
 
 func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
@@ -254,15 +264,14 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 		return fmt.Errorf(fmt.Sprintf("unrecognized health: %s", health))
 	}
 
-	for _, dev := range m.devices {
-		if dev.path == path {
-			log.Infof("Device: %s, now: %s", path, health)
-			dev.device.Health = health
-			return nil
-		}
+	dev, err := m.getDeviceByPath(path)
+	if err != nil {
+		return err
 	}
 
-	return fmt.Errorf("device not found")
+	log.Infof("Device: %s, now: %s", path, health)
+	dev.device.Health = health
+	return nil
 }
 
 func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
@@ -278,15 +287,13 @@ func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
 
 // API Functions
 
-// GetDevicePluginOptions returns options to be communicated with Device
-// Manager
+// GetDevicePluginOptions returns options to be communicated with Device Manager
 func (m *DevicePluginServer) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
 	return &pluginapi.DevicePluginOptions{}, nil
 }
 
-// ListAndWatch returns a stream of List of Devices
-// Whenever a Device state change or a Device disapears, ListAndWatch
-// returns the new list
+// ListAndWatch returns a stream of List of Devices Whenever a Device state change
+// or a Device disapears, ListAndWatch returns the new list
 func (m *DevicePluginServer) ListAndWatch(empty *pluginapi.Empty, srv pluginapi.DevicePlugin_ListAndWatchServer) error {
 	m.wg.Add(1)
 	defer m.wg.Done()
@@ -338,11 +345,12 @@ func (m *DevicePluginServer) ListAndWatch(empty *pluginapi.Empty, srv pluginapi.
 	return nil
 }
 
-// Allocate is called during container creation so that the Device
-// Plugin can run device specific operations and instruct Kubelet
-// of the steps to make the Device available in the container
-func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.AllocateRequest) (resp *pluginapi.AllocateResponse, err error) {
+// Allocate is called during container creation so that the Device Plugin can run
+// device specific operations and instruct Kubelet of the steps to make the Device
+// available in the container
+func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	log.Infof("%d container(s) requesting devices", len(req.ContainerRequests))
+	resp := pluginapi.AllocateResponse{}
 
 	for _, containerReq := range req.ContainerRequests {
 		log.Infof("\tContainer is requesting %d device(s)", len(containerReq.DevicesIDs))
@@ -387,16 +395,21 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 		}
 	}
 
-	return resp, nil
+	return &resp, nil
 }
 
-// PreStartContainer is called, if indicated by Device Plugin during registeration phase,
-// before each container start. Device plugin can run device specific operations
-// such as reseting the device before making devices available to the container
+// PreStartContainer is called, if indicated by Device Plugin during registeration
+// phase, before each container start. Device plugin can run device specific
+// operations such as reseting the device before making devices available to the
+// container
 func (m *DevicePluginServer) PreStartContainer(context.Context, *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
 	return &pluginapi.PreStartContainerResponse{}, nil
 }
 
+// GetPreferredAllocation returns a preferred set of devices to allocate from a list
+// of available ones. The resulting preferred allocation is not guaranteed to be the
+// allocation ultimately performed by the devicemanager. It is only designed to help
+// the devicemanager make a more informed allocation decision when possible.
 func (m *DevicePluginServer) GetPreferredAllocation(context.Context, *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	return &pluginapi.PreferredAllocationResponse{}, nil
 }
