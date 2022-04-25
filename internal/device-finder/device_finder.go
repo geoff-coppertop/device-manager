@@ -19,7 +19,7 @@ type DeviceMap struct {
 func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 	var devMap []DeviceMap
 
-	var rawDeviceMap map[string][]string
+	rawDeviceMap := make(map[string][]string)
 
 	for _, devMatch := range cfg.Matchers {
 		/* Have we seen this root path before? If not find all devices, and symlinks to devices, off of
