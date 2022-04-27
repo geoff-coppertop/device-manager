@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -353,7 +354,7 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 	resp := pluginapi.AllocateResponse{}
 
 	for _, containerReq := range req.ContainerRequests {
-		log.Infof("\tContainer is requesting %d device(s)", len(containerReq.DevicesIDs))
+		log.Infof("Container is requesting %d device(s)", len(containerReq.DevicesIDs))
 
 		for _, id := range containerReq.DevicesIDs {
 			dev, err := m.getDeviceById(id)
@@ -363,6 +364,8 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 
 			var paths []string
 
+			log.Infof("Adding %s to the container", dev.path)
+
 			paths = append(paths, dev.path)
 
 			fi, err := os.Stat(dev.path)
@@ -370,10 +373,18 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 				return nil, err
 			}
 
+			log.Info(fi)
+
 			if (fi.Mode() & fs.ModeSymlink) != 0 {
+				log.Infof("Following symlink: %s", dev.path)
 				symPath, err := os.Readlink(dev.path)
 				if err != nil {
 					return nil, err
+				}
+
+				if !filepath.IsAbs(symPath) {
+					symPath = filepath.Join(filepath.Dir(dev.path), symPath)
+					log.Infof("Sympath: %s", symPath)
 				}
 
 				paths = append(paths, symPath)
@@ -382,7 +393,7 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 			containerResp := pluginapi.ContainerAllocateResponse{}
 
 			for _, path := range paths {
-				log.Infof("\t\tpath: %s", path)
+				log.Infof("path: %s", path)
 
 				containerResp.Devices = append(containerResp.Devices, &pluginapi.DeviceSpec{
 					ContainerPath: path,
