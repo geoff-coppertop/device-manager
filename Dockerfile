@@ -11,12 +11,13 @@ ADD . ./
 RUN make build
 
 # Final stage
-FROM scratch
+FROM alpine
 LABEL org.opencontainers.image.source https://github.com/geoff-coppertop/device-manager-plugin
 
-COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=go-builder /device-manager-plugin/out/device-manager-plugin /
+RUN apk update && apk upgrade && apk add bash
+
+COPY --from=go-builder /device-manager-plugin/out/device-manager-plugin /usr/bin/
 COPY config.yml /config/config.yml
 
 # Run
-CMD ["/device-manager-plugin"]
+CMD ["/usr/bin/device-manager-plugin"]
