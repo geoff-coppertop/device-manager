@@ -41,25 +41,15 @@ func main() {
 		cancel()
 	}
 
-	var pluginServers []*srv.DevicePluginServer
-
 	for _, devMap := range devMappings {
-		dps := srv.NewDevicePluginServer(&wg, ctx, devMap.Paths, devMap.Group)
-		if err = dps.Start(); err != nil {
+		dps := srv.NewDevicePluginServer(devMap.Paths, devMap.Group, &wg)
+		if err = dps.Run(ctx); err != nil {
 			cancel()
 			break
 		}
-
-		pluginServers = append(pluginServers, dps)
 	}
 
 	WaitProcess(&wg, ctx.Done(), cancel)
-
-	for _, dps := range pluginServers {
-		if err = dps.Stop(); err != nil {
-			log.Error(err)
-		}
-	}
 }
 
 func WaitProcess(wg *sync.WaitGroup, ch <-chan struct{}, cancel context.CancelFunc) {
