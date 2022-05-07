@@ -3,11 +3,9 @@ package devicepluginserver
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net"
 	"os"
 	"path"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	utl "github.com/geoff-coppertop/device-manager-plugin/internal/util"
 )
 
 type Device struct {
@@ -193,27 +193,13 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 	for _, device := range m.devices {
 		path := device.path
 
-		info, err := os.Stat(path)
-
-		mode := info.Mode()
-
-		log.Infof("mode: %X, %X, %X", mode, fs.ModeSymlink, mode&fs.ModeSymlink)
-
-		switch {
-		case mode&fs.ModeSymlink != 0:
-			log.Infof("Skipping watch on: %s", path)
-
-			// Found symlink, follow it and see if it's pointing at a device directly
-			symPath, err := os.Readlink(path)
+		if utl.IsSymlink(path) {
+			symPath, err := utl.FollowSymlink(path)
 			if err != nil {
-				log.Warnf("Bad symlink: %v", err)
-				return err
+
 			}
 
-			if !filepath.IsAbs(symPath) {
-				path = filepath.Join(filepath.Dir(path), symPath)
-				log.Tracef("Sympath: %s", symPath)
-			}
+			path = symPath
 		}
 
 		log.Infof("Adding watch on: %s", path)
@@ -271,6 +257,15 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 				}
 
 				log.Infof("Device: %s, was: %s, now %s", event.Name, initHealth, newHealth)
+
+				symPath, err := m.findDeviceSymlinkToPath(event.Name)
+				if err == nil {
+					if err := m.setDeviceHealth(symPath, newHealth); err != nil {
+						return
+					}
+
+					log.Infof("Device: %s, was: %s, now %s", symPath, initHealth, newHealth)
+				}
 
 				// Notify that there was a health update
 				m.healthUpd <- true
@@ -426,6 +421,25 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 	return nil
 }
 
+// findDeviceSymlinkToPath returns a device in the list with a symlink that points to the provided
+// path, returns an error if no symlink is found
+func (m *DevicePluginServer) findDeviceSymlinkToPath(path string) (string, error) {
+	for _, dev := range m.devices {
+		if utl.IsSymlink(dev.path) {
+			symPath, err := utl.FollowSymlink(dev.path)
+			if err != nil {
+				return "", err
+			}
+
+			if symPath == path {
+				return dev.path, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no symlink points to the given path")
+}
+
 // API Functions
 
 // GetDevicePluginOptions returns options to be communicated with Device Manager
@@ -481,23 +495,10 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 
 			paths = append(paths, dev.path)
 
-			fi, err := os.Stat(dev.path)
-			if err != nil {
-				return nil, err
-			}
-
-			log.Info(fi)
-
-			if (fi.Mode() & fs.ModeSymlink) != 0 {
-				log.Infof("Following symlink: %s", dev.path)
-				symPath, err := os.Readlink(dev.path)
+			if utl.IsSymlink(dev.path) {
+				symPath, err := utl.FollowSymlink(dev.path)
 				if err != nil {
 					return nil, err
-				}
-
-				if !filepath.IsAbs(symPath) {
-					symPath = filepath.Join(filepath.Dir(dev.path), symPath)
-					log.Infof("Sympath: %s", symPath)
 				}
 
 				paths = append(paths, symPath)

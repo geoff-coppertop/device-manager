@@ -1,13 +1,13 @@
 package devicefinder
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	cfg "github.com/geoff-coppertop/device-manager-plugin/internal/config"
+	utl "github.com/geoff-coppertop/device-manager-plugin/internal/util"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -94,41 +94,25 @@ func findDevices(root string) (devices []string, err error) {
 				return nil
 			}
 
-			switch mode := info.Mode(); {
-			case mode&fs.ModeSymlink != 0:
-				log.Infof("Following symlink: %s", path)
-				// Found symlink, follow it and see if it's pointing at a device directly
-				symPath, err := os.Readlink(path)
+			if utl.IsSymlink(path) {
+				symPath, err := utl.FollowSymlink(path)
 				if err != nil {
 					log.Warnf("Bad symlink: %v", err)
 					return nil
 				}
 
-				if !filepath.IsAbs(symPath) {
-					symPath = filepath.Join(filepath.Dir(path), symPath)
-					log.Infof("Sympath: %s", symPath)
-				}
+				path = symPath
+			}
 
-				info, err = os.Stat(symPath)
-				if err != nil {
-					log.Warnf("Bad stat: %v", err)
-					return nil
-				}
-
-				if info.Mode()&fs.ModeDevice != 0 {
-					devices = append(devices, path)
-				} else {
-					log.Infof("Ignoring: %s", path)
-				}
-
-			case mode&fs.ModeDevice != 0:
+			if utl.IsDevice(path) {
 				devices = append(devices, path)
-			default:
+			} else {
 				log.Infof("Ignoring: %s", path)
 			}
 
 			return nil
 		})
+
 	if err != nil {
 		log.Warnf("Directory walk failed: %v", err)
 		return nil, err
@@ -160,24 +144,11 @@ func filterSymlinks(unfilteredDevs *[]string, filteredDevs []string) error {
 	for _, dev := range filteredDevs {
 		log.Infof("filterSymlinks: %s", dev)
 
-		info, err := os.Stat(dev)
-		if err != nil {
-			log.Warnf("Bad stat: %v", err)
-			return err
-		}
-
-		if (info.Mode() & fs.ModeSymlink) != 0 {
-			log.Tracef("Following symlink: %s", dev)
-			// Found symlink, follow it and see if it's pointing at a device directly
-			symPath, err := os.Readlink(dev)
+		if utl.IsSymlink(dev) {
+			symPath, err := utl.FollowSymlink(dev)
 			if err != nil {
 				log.Warnf("Bad symlink: %v", err)
-				return err
-			}
-
-			if !filepath.IsAbs(symPath) {
-				symPath = filepath.Join(filepath.Dir(dev), symPath)
-				log.Tracef("Sympath: %s", symPath)
+				return nil
 			}
 
 			if i := index(*unfilteredDevs, symPath); i != -1 {
