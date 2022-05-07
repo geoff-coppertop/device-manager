@@ -96,7 +96,7 @@ func findDevices(root string) (devices []string, err error) {
 
 			switch mode := info.Mode(); {
 			case mode&fs.ModeSymlink != 0:
-				log.Tracef("Following symlink: %s", path)
+				log.Infof("Following symlink: %s", path)
 				// Found symlink, follow it and see if it's pointing at a device directly
 				symPath, err := os.Readlink(path)
 				if err != nil {
@@ -106,7 +106,7 @@ func findDevices(root string) (devices []string, err error) {
 
 				if !filepath.IsAbs(symPath) {
 					symPath = filepath.Join(filepath.Dir(path), symPath)
-					log.Tracef("Sympath: %s", symPath)
+					log.Infof("Sympath: %s", symPath)
 				}
 
 				info, err = os.Stat(symPath)
@@ -118,13 +118,13 @@ func findDevices(root string) (devices []string, err error) {
 				if info.Mode()&fs.ModeDevice != 0 {
 					devices = append(devices, path)
 				} else {
-					log.Tracef("Ignoring: %s", path)
+					log.Infof("Ignoring: %s", path)
 				}
 
 			case mode&fs.ModeDevice != 0:
 				devices = append(devices, path)
 			default:
-				log.Tracef("Ignoring: %s", path)
+				log.Infof("Ignoring: %s", path)
 			}
 
 			return nil

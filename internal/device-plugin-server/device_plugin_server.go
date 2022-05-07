@@ -194,7 +194,12 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 		path := device.path
 
 		info, err := os.Stat(path)
-		if (info.Mode() & fs.ModeSymlink) != 0 {
+
+		mode := info.Mode()
+
+		log.Infof("mode: %X, %X", mode, fs.ModeSymlink)
+
+		if mode&fs.ModeSymlink != 0 {
 			log.Infof("Skipping watch on: %s", path)
 
 			// Found symlink, follow it and see if it's pointing at a device directly
