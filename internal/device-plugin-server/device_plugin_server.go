@@ -191,9 +191,28 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 	}
 
 	for _, device := range m.devices {
-		log.Infof("Adding watch on: %s", device.path)
+		path := device.path
 
-		err = watcher.Add(device.path)
+		info, err := os.Stat(path)
+		if (info.Mode() & fs.ModeSymlink) != 0 {
+			log.Infof("Skipping watch on: %s", path)
+
+			// Found symlink, follow it and see if it's pointing at a device directly
+			symPath, err := os.Readlink(path)
+			if err != nil {
+				log.Warnf("Bad symlink: %v", err)
+				return err
+			}
+
+			if !filepath.IsAbs(symPath) {
+				path = filepath.Join(filepath.Dir(path), symPath)
+				log.Tracef("Sympath: %s", symPath)
+			}
+		}
+
+		log.Infof("Adding watch on: %s", path)
+
+		err = watcher.Add(path)
 		if err != nil {
 			log.Warnf("Failed to setup watcher: %v", err)
 			watcher.Close()

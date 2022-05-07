@@ -38,6 +38,15 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		 * the expression */
 		unfilteredDevs := rawDeviceMap[devMatch.Search]
 		filteredDevs, err := filterDevices(&unfilteredDevs, devMatch.Match)
+
+		unfilteredDevsLen := len(unfilteredDevs)
+
+		log.Infof(
+			"filterDevices returned %d, for %s. %d devices remaining",
+			len(filteredDevs),
+			devMatch.Match,
+			unfilteredDevsLen)
+
 		if err != nil {
 			/* Something failed in the match checking */
 			continue
@@ -50,6 +59,10 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		/* Need to follow symlinks that may have been pulled in to the filtered list and remove where
 		 * they point from the unfiltered list if applicable */
 		err = filterSymlinks(&unfilteredDevs, filteredDevs)
+
+		log.Infof(
+			"filterSymlinks removed %d device(s)",
+			unfilteredDevsLen-len(unfilteredDevs))
 
 		rawDeviceMap[devMatch.Search] = unfilteredDevs
 
@@ -145,6 +158,8 @@ func filterDevices(unfilteredDevices *[]string, patterns []string) (filteredDevi
 
 func filterSymlinks(unfilteredDevs *[]string, filteredDevs []string) error {
 	for _, dev := range filteredDevs {
+		log.Infof("filterSymlinks: %s", dev)
+
 		info, err := os.Stat(dev)
 		if err != nil {
 			log.Warnf("Bad stat: %v", err)
