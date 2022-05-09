@@ -67,15 +67,18 @@ func FollowSymlink(path string) (string, error) {
 		return "", err
 	}
 
-	glog.V(2).Infof("symPath: %s", path)
+	glog.V(2).Infof("symPath: %s", symPath)
 
 	if !filepath.IsAbs(symPath) {
 		symPath = filepath.Join(filepath.Dir(path), symPath)
-		glog.V(2).Infof("symPath: %s", path)
+		glog.V(2).Infof("Absolute symPath: %s", symPath)
 	}
+
+	glog.V(2).Infof("checking that symPath: %s, is valid", symPath)
 
 	_, err = os.Stat(symPath)
 	if err != nil {
+		glog.Error(err)
 		return "", err
 	}
 
