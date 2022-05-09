@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
+
+	"github.com/golang/glog"
 )
 
 type DeviceMatch struct {
@@ -15,7 +16,6 @@ type DeviceMatch struct {
 }
 
 type Config struct {
-	Debug         string
 	Matchers      []DeviceMatch `yaml:",flow"`
 	DefaultSearch string        `yaml:"search"`
 }
@@ -28,12 +28,13 @@ func ParseConfig(path string) (cfg Config, err error) {
 
 	yamlFile, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("yamlFile.Get err   #%v ", err)
+		glog.Error(err)
 		return Config{}, err
 	}
 
 	err = yaml.Unmarshal(yamlFile, &cfg)
 	if err != nil {
+		glog.Error(err)
 		return Config{}, err
 	}
 
@@ -47,8 +48,7 @@ func ParseConfig(path string) (cfg Config, err error) {
 }
 
 func (cfg *Config) String() string {
-	str := fmt.Sprintf("debug: %s\n", cfg.Debug)
-	str += fmt.Sprintln("devices:")
+	str := fmt.Sprintln("devices:")
 	for _, match := range cfg.Matchers {
 		str += fmt.Sprintf("- match: %s\n", match.Match)
 		str += fmt.Sprintf("  group: %s\n", match.Group)

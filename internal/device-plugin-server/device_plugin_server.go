@@ -9,15 +9,15 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/golang/glog"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	utl "github.com/geoff-coppertop/device-manager-plugin/internal/util"
+	fs "github.com/geoff-coppertop/device-manager-plugin/internal/util/fs"
 )
 
 type Device struct {
@@ -43,8 +43,8 @@ func NewDevicePluginServer(devicePaths []string, deviceGroupName string, wg *syn
 		wg:           wg,
 	}
 
-	log.Infof("%s has %d paths", srv.resourceName, len(devicePaths))
-	log.Infof("Paths: %s", devicePaths)
+	glog.V(2).Infof("%s has %d paths", srv.resourceName, len(devicePaths))
+	glog.V(3).Infof("Paths: %s", devicePaths)
 
 	for _, path := range devicePaths {
 		srv.devices = append(srv.devices, Device{
@@ -56,65 +56,85 @@ func NewDevicePluginServer(devicePaths []string, deviceGroupName string, wg *syn
 		})
 	}
 
-	log.Infof("%s has %d devices", srv.resourceName, len(srv.devices))
-
 	return &srv
 }
 
 // Run makes the plugin go, plugin can be terminated using the provided context
 func (m *DevicePluginServer) Run(ctx context.Context) error {
+	glog.V(2).Info("Entering Run")
+
 	m.wg.Add(1)
 
 	go func() {
 		defer m.wg.Done()
 		defer m.stop()
 
+		glog.V(2).Info("Starting run thread")
+
 		for {
 			m.restart = false
 			restartCtx, restartFunc := context.WithCancel(ctx)
 
+			glog.V(2).Info("Server starting...")
+
 			if err := m.start(restartCtx, restartFunc); err != nil {
+				glog.Error(err)
+
+				// There is the need to signal an error here...
 				return
 			}
+
+			glog.V(2).Info("Server started.")
 
 			select {
 			case <-restartCtx.Done():
 				if m.restart {
+					glog.V(2).Info("Restart requested.")
 					continue
 				}
+
+				// Do we need to signal an error here?
 				return
 			}
 		}
 	}()
+
+	glog.V(2).Info("Server running.")
 
 	return nil
 }
 
 // start sets up kubelet and device watchers and registers the plugin
 func (m *DevicePluginServer) start(ctx context.Context, restart context.CancelFunc) error {
-	log.Info("Cleanup previous runs")
+	glog.V(2).Info("Cleanup previous runs")
 
 	if err := m.stop(); err != nil {
+		glog.Error(err)
 		return err
 	}
 
-	log.Info("Starting kubelet watcher")
+	glog.V(2).Info("Starting kubelet watcher")
 
 	if err := m.startKubeletWatcher(ctx, restart); err != nil {
+		glog.Error(err)
 		return err
 	}
 
-	log.Info("Starting device watcher")
+	glog.V(2).Info("Starting device watcher")
 
 	if err := m.startDeviceWatcher(ctx); err != nil {
+		glog.Error(err)
 		return err
 	}
 
-	log.Info("Registering with Kubelet")
+	glog.V(2).Info("Registering with Kubelet")
 
 	if err := m.register(ctx); err != nil {
+		glog.Error(err)
 		return err
 	}
+
+	glog.V(2).Info("Device Plugin Server successfully started.")
 
 	return nil
 }
@@ -122,21 +142,22 @@ func (m *DevicePluginServer) start(ctx context.Context, restart context.CancelFu
 // stop shuts down kubelet communication and cleans up
 func (m *DevicePluginServer) stop() error {
 	if m.server != nil {
-		log.Info("Stopping socket server")
+		glog.V(2).Info("Stopping socket server")
 
 		m.server.Stop()
 		m.server = nil
 
-		log.Info("Socket server stopped")
+		glog.V(2).Info("Socket server stopped")
 	}
 
-	log.Infof("Removing file socket file: %s", m.socket)
+	glog.V(2).Infof("Removing file socket file: %s", m.socket)
 
 	if err := os.Remove(m.socket); err != nil && !os.IsNotExist(err) {
+		glog.Error(err)
 		return err
 	}
 
-	log.Info("Socket file removed")
+	glog.V(2).Info("Socket file removed")
 
 	return nil
 }
@@ -144,10 +165,15 @@ func (m *DevicePluginServer) stop() error {
 // startKubeletWatcher watches the Kubelet socket path for changes and restarts the plugin if add
 // or remove is detected
 func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart context.CancelFunc) error {
+	glog.V(2).Info("Creating kubelet watcher")
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
+
+	glog.V(2).Info("Kubelet watcher created.")
 
 	m.wg.Add(1)
 
@@ -155,7 +181,14 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 		defer m.wg.Done()
 		defer watcher.Close()
 
-		watcher.Add(pluginapi.KubeletSocket)
+		err = watcher.Add(pluginapi.KubeletSocket)
+		if err != nil {
+			glog.Error(err)
+			// Need an error channel here to capture errors
+			return
+		}
+
+		glog.V(2).Infof("Added watch on, %s", pluginapi.KubeletSocket)
 
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -163,13 +196,13 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 		select {
 		case event := <-watcher.Events:
 			if event.Name == pluginapi.KubeletSocket && event.Op&fsnotify.Create == fsnotify.Create {
-				log.Infof("inotify: %s created, restarting.", event.Name)
+				glog.V(2).Infof("inotify: %s created, restarting.", event.Name)
 				m.restart = true
 				restart()
 			}
 
 		case err := <-watcher.Errors:
-			log.Infof("inotify: %s", err)
+			glog.V(2).Infof("inotify: %s", err)
 			m.restart = true
 			restart()
 
@@ -178,6 +211,7 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 		}
 	}()
 
+	// This should probably return an error channel
 	return nil
 }
 
@@ -185,28 +219,34 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 // started so inotify removed is treated as the device becoming unhealth, added is treated as
 // becoming healthy again.
 func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
+	glog.V(2).Info("Creating device watcher")
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
+
+	glog.V(2).Info("Device watcher created")
 
 	for _, device := range m.devices {
 		path := device.path
 
-		if utl.IsSymlink(path) {
-			symPath, err := utl.FollowSymlink(path)
+		if fs.IsSymlink(path) {
+			symPath, err := fs.FollowSymlink(path)
 			if err != nil {
-
+				glog.Error(err)
+				return err
 			}
 
 			path = symPath
 		}
 
-		log.Infof("Adding watch on: %s", path)
+		glog.V(2).Infof("Adding watch on: %s", path)
 
 		err = watcher.Add(path)
 		if err != nil {
-			log.Warnf("Failed to setup watcher: %v", err)
+			glog.Errorf("Failed to setup watcher: %v", err)
 			watcher.Close()
 			return err
 		}
@@ -231,7 +271,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 				return
 
 			case event := <-watcher.Events:
-				log.Infof("FS watch event for: %s", event.Name)
+				glog.V(2).Infof("FS watch event for: %s", event.Name)
 
 				initHealth, err := m.getDeviceHealth(event.Name)
 				if err != nil {
@@ -248,7 +288,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 					newHealth = pluginapi.Unhealthy
 
 				default:
-					log.Infof("Device: %s, encountered: %d", event.Name, event.Op)
+					glog.V(2).Infof("Device: %s, encountered: %d", event.Name, event.Op)
 					continue
 				}
 
@@ -256,7 +296,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 					return
 				}
 
-				log.Infof("Device: %s, was: %s, now %s", event.Name, initHealth, newHealth)
+				glog.V(2).Infof("Device: %s, was: %s, now %s", event.Name, initHealth, newHealth)
 
 				symPath, err := m.findDeviceSymlinkToPath(event.Name)
 				if err == nil {
@@ -264,7 +304,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 						return
 					}
 
-					log.Infof("Device: %s, was: %s, now %s", symPath, initHealth, newHealth)
+					glog.V(2).Infof("Device: %s, was: %s, now %s", symPath, initHealth, newHealth)
 				}
 
 				// Notify that there was a health update
@@ -279,14 +319,14 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 // register sets up communication between the kubelet and the device plugin for the given
 // resourceName
 func (m *DevicePluginServer) register(ctx context.Context) error {
-	log.Infof("Creating plugin socket: %s", m.socket)
+	glog.V(2).Infof("Creating plugin socket: %s", m.socket)
 
 	sock, err := net.Listen("unix", m.socket)
 	if err != nil {
 		return err
 	}
 
-	log.Info("Starting socket server")
+	glog.V(2).Info("Starting socket server")
 
 	m.server = grpc.NewServer([]grpc.ServerOption{}...)
 	pluginapi.RegisterDevicePluginServer(m.server, m)
@@ -307,7 +347,7 @@ func (m *DevicePluginServer) register(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	log.Infof("Making device plugin registration request for: %s", m.resourceName)
+	glog.V(2).Infof("Making device plugin registration request for: %s", m.resourceName)
 
 	client := pluginapi.NewRegistrationClient(conn)
 	req := &pluginapi.RegisterRequest{
@@ -316,7 +356,7 @@ func (m *DevicePluginServer) register(ctx context.Context) error {
 		ResourceName: m.resourceName,
 	}
 
-	log.Info("Registering device plugin")
+	glog.V(2).Info("Registering device plugin")
 
 	_, err = client.Register(ctx, req)
 	if err != nil {
@@ -328,7 +368,7 @@ func (m *DevicePluginServer) register(ctx context.Context) error {
 
 // connect establishes the gRPC communication with the provided socket path
 func (m *DevicePluginServer) connect(ctx context.Context, socketPath string, timeout time.Duration) (*grpc.ClientConn, error) {
-	log.Infof("Connecting to socket: %s", socketPath)
+	glog.V(2).Infof("Connecting to socket: %s", socketPath)
 
 	connCtx, cancel := context.WithDeadline(ctx, time.Now().Add(timeout))
 	defer cancel()
@@ -352,20 +392,20 @@ func (m *DevicePluginServer) connect(ctx context.Context, socketPath string, tim
 		return nil, err
 	}
 
-	log.Infof("Connected to socket: %s", socketPath)
+	glog.V(2).Infof("Connected to socket: %s", socketPath)
 
 	return c, nil
 }
 
 // getDeviceList returns the device list
 func (m *DevicePluginServer) getDeviceList() (devs []*pluginapi.Device) {
-	log.Infof("There are %d devce(s)", len(m.devices))
+	glog.V(2).Infof("There are %d devce(s)", len(m.devices))
 
 	for _, dev := range m.devices {
 		devs = append(devs, dev.device)
 	}
 
-	log.Infof("Found %d devce(s)", len(devs))
+	glog.V(2).Infof("Found %d devce(s)", len(devs))
 
 	return devs
 }
@@ -374,6 +414,7 @@ func (m *DevicePluginServer) getDeviceList() (devs []*pluginapi.Device) {
 func (m *DevicePluginServer) getDeviceByPath(path string) (Device, error) {
 	for _, dev := range m.devices {
 		if dev.path == path {
+			glog.V(2).Infof("Found device with path: %s", path)
 			return dev, nil
 		}
 	}
@@ -385,7 +426,7 @@ func (m *DevicePluginServer) getDeviceByPath(path string) (Device, error) {
 func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
 	for _, d := range m.devices {
 		if d.device.ID == id {
-			log.Infof("Found device with ID: %s", id)
+			glog.V(2).Infof("Found device with ID: %s", id)
 			return d, nil
 		}
 	}
@@ -397,11 +438,12 @@ func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
 func (m *DevicePluginServer) getDeviceHealth(path string) (string, error) {
 	dev, err := m.getDeviceByPath(path)
 	if err != nil {
+		glog.Error(err)
 		return "", err
 	}
 
 	health := dev.device.GetHealth()
-	log.Infof("Device: %s, is: %s", path, health)
+	glog.V(2).Infof("Device: %s, is: %s", path, health)
 	return health, nil
 }
 
@@ -413,10 +455,11 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 
 	dev, err := m.getDeviceByPath(path)
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
 
-	log.Infof("Device: %s, now: %s", path, health)
+	glog.V(2).Infof("Device: %s, now: %s", path, health)
 	dev.device.Health = health
 	return nil
 }
@@ -425,13 +468,15 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 // path, returns an error if no symlink is found
 func (m *DevicePluginServer) findDeviceSymlinkToPath(path string) (string, error) {
 	for _, dev := range m.devices {
-		if utl.IsSymlink(dev.path) {
-			symPath, err := utl.FollowSymlink(dev.path)
+		if fs.IsSymlink(dev.path) {
+			symPath, err := fs.FollowSymlink(dev.path)
 			if err != nil {
+				glog.Error(err)
 				return "", err
 			}
 
 			if symPath == path {
+				glog.V(2).Infof("Found symlink %s that points to  %s", dev.path, path)
 				return dev.path, nil
 			}
 		}
@@ -454,11 +499,11 @@ func (m *DevicePluginServer) ListAndWatch(empty *pluginapi.Empty, srv pluginapi.
 	defer m.wg.Done()
 
 	for {
-		log.Info("Getting device list")
+		glog.V(2).Info("Getting device list")
 
 		devs := m.getDeviceList()
 
-		log.Infof("Found %d device(s), sending to kubelet", len(devs))
+		glog.V(2).Infof("Found %d device(s), sending to kubelet", len(devs))
 
 		srv.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 
@@ -477,11 +522,11 @@ func (m *DevicePluginServer) ListAndWatch(empty *pluginapi.Empty, srv pluginapi.
 // Allocate is called during container creation so that the Device Plugin can run device specific
 // operations and instruct Kubelet of the steps to make the Device available in the container
 func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
-	log.Infof("%d container(s) requesting devices", len(req.ContainerRequests))
+	glog.V(2).Infof("%d container(s) requesting devices", len(req.ContainerRequests))
 	resp := pluginapi.AllocateResponse{}
 
 	for _, containerReq := range req.ContainerRequests {
-		log.Infof("Container is requesting %d device(s)", len(containerReq.DevicesIDs))
+		glog.V(2).Infof("Container is requesting %d device(s)", len(containerReq.DevicesIDs))
 
 		for _, id := range containerReq.DevicesIDs {
 			dev, err := m.getDeviceById(id)
@@ -491,12 +536,12 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 
 			var paths []string
 
-			log.Infof("Adding %s to the container", dev.path)
+			glog.V(2).Infof("Adding %s to the container", dev.path)
 
 			paths = append(paths, dev.path)
 
-			if utl.IsSymlink(dev.path) {
-				symPath, err := utl.FollowSymlink(dev.path)
+			if fs.IsSymlink(dev.path) {
+				symPath, err := fs.FollowSymlink(dev.path)
 				if err != nil {
 					return nil, err
 				}
@@ -507,7 +552,7 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 			containerResp := pluginapi.ContainerAllocateResponse{}
 
 			for _, path := range paths {
-				log.Infof("path: %s", path)
+				glog.V(2).Infof("path: %s", path)
 
 				containerResp.Devices = append(containerResp.Devices, &pluginapi.DeviceSpec{
 					ContainerPath: path,

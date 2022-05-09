@@ -6,9 +6,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/golang/glog"
+
 	cfg "github.com/geoff-coppertop/device-manager-plugin/internal/config"
-	utl "github.com/geoff-coppertop/device-manager-plugin/internal/util"
-	log "github.com/sirupsen/logrus"
+	arr "github.com/geoff-coppertop/device-manager-plugin/internal/util/array"
+	fs "github.com/geoff-coppertop/device-manager-plugin/internal/util/fs"
 )
 
 type DeviceMap struct {
@@ -17,6 +19,8 @@ type DeviceMap struct {
 }
 
 func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
+	glog.V(3).Info("Entering GenerateDeviceMapping")
+
 	var devMap []DeviceMap
 
 	rawDeviceMap := make(map[string][]string)
@@ -25,11 +29,15 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		/* Have we seen this root path before? If not find all devices, and symlinks to devices, off of
 		 * that root path and keep track of it */
 		if _, ok := rawDeviceMap[devMatch.Search]; !ok {
+			glog.V(2).Infof("New root path: %s", devMatch.Search)
 			devs, err := findDevices(devMatch.Search)
 			if err != nil {
+				glog.V(2).Infof("Didn't find any devices under: %s", devMatch.Search)
 				/* Didn't find anything under this root path go to next matcher */
 				continue
 			}
+
+			glog.V(2).Infof("Found %d devices under: %s", len(devs), devMatch.Search)
 
 			rawDeviceMap[devMatch.Search] = devs
 		}
@@ -38,21 +46,22 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		 * the expression */
 		unfilteredDevs := rawDeviceMap[devMatch.Search]
 		filteredDevs, err := filterDevices(&unfilteredDevs, devMatch.Match)
+		if err != nil {
+			/* Something failed in the match checking */
+			glog.Error(err)
+			continue
+		}
 
 		unfilteredDevsLen := len(unfilteredDevs)
 
-		log.Infof(
+		glog.V(2).Infof(
 			"filterDevices returned %d, for %s. %d devices remaining",
 			len(filteredDevs),
 			devMatch.Match,
 			unfilteredDevsLen)
 
-		if err != nil {
-			/* Something failed in the match checking */
-			continue
-		}
 		if len(filteredDevs) <= 0 {
-			/* We didn't find any devices which match the expression */
+			glog.V(2).Infof("No devices found which match the expression")
 			continue
 		}
 
@@ -60,7 +69,7 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		 * they point from the unfiltered list if applicable */
 		err = filterSymlinks(&unfilteredDevs, filteredDevs)
 
-		log.Infof(
+		glog.V(2).Infof(
 			"filterSymlinks removed %d device(s)",
 			unfilteredDevsLen-len(unfilteredDevs))
 
@@ -69,10 +78,14 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		if devMatch.Group != "" {
 			group := sanitizeName(devMatch.Group)
 
+			glog.V(2).Infof("%d devices in group: %s", len(filteredDevs), group)
+
 			devMap = append(devMap, DeviceMap{Paths: filteredDevs, Group: group})
 		} else {
 			for _, dev := range filteredDevs {
 				group := sanitizeName(strings.TrimPrefix(dev, devMatch.Search))
+
+				glog.V(2).Infof("%d devices in group: %s", 1, group)
 
 				devMap = append(devMap, DeviceMap{Paths: []string{dev}, Group: group})
 			}
@@ -90,31 +103,32 @@ func findDevices(root string) (devices []string, err error) {
 	err = filepath.Walk(root,
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Warn(err)
+				glog.Warning(err)
 				return nil
 			}
 
-			if utl.IsSymlink(path) {
-				symPath, err := utl.FollowSymlink(path)
+			if fs.IsSymlink(path) {
+				symPath, err := fs.FollowSymlink(path)
 				if err != nil {
-					log.Warnf("Bad symlink: %v", err)
+					glog.Warning(err)
 					return nil
 				}
 
 				path = symPath
 			}
 
-			if utl.IsDevice(path) {
+			if fs.IsDevice(path) {
+				glog.V(2).Infof("Adding, %s to list.", path)
 				devices = append(devices, path)
 			} else {
-				log.Infof("Ignoring: %s", path)
+				glog.V(3).Infof("Ignoring: %s", path)
 			}
 
 			return nil
 		})
 
 	if err != nil {
-		log.Warnf("Directory walk failed: %v", err)
+		glog.Warning(err)
 		return nil, err
 	}
 
@@ -142,59 +156,24 @@ func filterDevices(unfilteredDevices *[]string, patterns []string) (filteredDevi
 
 func filterSymlinks(unfilteredDevs *[]string, filteredDevs []string) error {
 	for _, dev := range filteredDevs {
-		log.Infof("filterSymlinks: %s", dev)
+		glog.V(3).Infof("filterSymlinks: %s", dev)
 
-		if utl.IsSymlink(dev) {
-			symPath, err := utl.FollowSymlink(dev)
+		if fs.IsSymlink(dev) {
+			symPath, err := fs.FollowSymlink(dev)
 			if err != nil {
-				log.Warnf("Bad symlink: %v", err)
+				glog.Warning(err)
 				return nil
 			}
 
-			if i := index(*unfilteredDevs, symPath); i != -1 {
+			if i := arr.Index(*unfilteredDevs, symPath); i != -1 {
+				glog.V(3).Infof("removing %s from unfilteredDevs", symPath)
 				/* remove from the unfilteredDevs list because the filtered list has a symlink that points
 				 * at this device and it and the symlink are potentially going to be linked into a
 				 * container */
-				*unfilteredDevs = remove(*unfilteredDevs, i, 1)
+				*unfilteredDevs = arr.Remove(*unfilteredDevs, i, 1)
 			}
 		}
 	}
 
 	return nil
-}
-
-func index(s []string, v string) int {
-	for i, vs := range s {
-		if v == vs {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func remove(s []string, startIndex int, count int) []string {
-	if count <= 0 {
-		return s
-	}
-
-	if startIndex < 0 {
-		if startIndex+count <= 0 {
-			return s
-		}
-
-		if startIndex+count > 0 {
-			return s[startIndex+count:]
-		}
-	}
-
-	if startIndex >= len(s) {
-		return s
-	}
-
-	if startIndex+count > len(s) {
-		return s[:startIndex]
-	}
-
-	return append(s[:startIndex], s[startIndex+count:]...)
 }

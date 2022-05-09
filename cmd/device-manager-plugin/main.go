@@ -2,39 +2,40 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 
+	"github.com/golang/glog"
+
 	cfg "github.com/geoff-coppertop/device-manager-plugin/internal/config"
 	fnd "github.com/geoff-coppertop/device-manager-plugin/internal/device-finder"
 	srv "github.com/geoff-coppertop/device-manager-plugin/internal/device-plugin-server"
-	log "github.com/sirupsen/logrus"
 )
 
+// init runs early to setup flag parsing which is used to configure logging
+func init() {
+	flag.Set("v", "3")
+	flag.Parse()
+}
+
+// main runs all the things
 func main() {
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-	})
-
-	// log.SetLevel(cfg.Debug)
-	log.Info("Starting")
-
-	// log.Debug(cfg)
+	glog.V(3).Info("Starting")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	var wg sync.WaitGroup
 
 	/* do the things */
 	cfg, err := cfg.ParseConfig("config/config.yml")
 	if err != nil {
-		// log.Error("Oh shit")
+		glog.Error(err)
 		cancel()
 	}
-	log.Debugf("\nConfig\n------\n%s", cfg.String())
+	glog.V(3).Infof("\nConfig\n------\n%s\n", cfg.String())
 
 	devMappings, err := fnd.GenerateDeviceMapping(cfg)
 	if err != nil {
@@ -49,33 +50,36 @@ func main() {
 		}
 	}
 
-	WaitProcess(&wg, ctx.Done(), cancel)
+	WaitProcess(ctx, cancel, &wg)
 }
 
-func WaitProcess(wg *sync.WaitGroup, ch <-chan struct{}, cancel context.CancelFunc) {
-	log.Info("Waiting")
+// WaitProcess waits for all process to terminate and should be run as the last call in main
+func WaitProcess(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup) {
+	glog.V(3).Info("Waiting")
 
 	select {
 	case <-OSExit():
-		log.Info("signal caught - exiting")
+		glog.V(3).Info("signal caught - exiting")
+		cancel()
 
-	case <-ch:
-		log.Errorf("uh-oh")
+	case <-ctx.Done():
+		glog.V(3).Info("ctx channel closed")
 	}
 
-	cancel()
-
-	log.Info("cancelled")
+	glog.V(3).Info("start waiting for everything to terminate")
 
 	wg.Wait()
 
-	log.Info("goodbye")
+	glog.V(3).Info("done waiting")
 }
 
+// OSExit returns a channel that can be used to wait on OS signals for app termination
 func OSExit() <-chan os.Signal {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	signal.Notify(sig, syscall.SIGTERM)
+
+	glog.V(3).Info("setup a channel to wait on OS signals")
 
 	return sig
 }
