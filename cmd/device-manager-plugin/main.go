@@ -17,7 +17,9 @@ import (
 
 // init runs early to setup flag parsing which is used to configure logging
 func init() {
-	flag.Set("v", "3")
+	flag.Set("logtostderr", "true")
+	flag.Set("stderrthreshold", "WARNING")
+	flag.Set("v", "4")
 	flag.Parse()
 }
 
