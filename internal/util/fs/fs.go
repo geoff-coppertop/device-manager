@@ -18,11 +18,13 @@ func IsDevice(path string) bool {
 		return false
 	}
 
+	mode := fi.Mode()
+
 	switch {
-	case fi.Mode()&os.ModeSymlink == os.ModeCharDevice:
+	case mode&os.ModeCharDevice == os.ModeCharDevice:
 		glog.V(2).Infof("path: %s, is a char device", path)
 		return true
-	case fi.Mode()&os.ModeSymlink == os.ModeDevice:
+	case mode&os.ModeDevice == os.ModeDevice:
 		glog.V(2).Infof("path: %s, is a device", path)
 		return true
 	default:
