@@ -107,6 +107,8 @@ func findDevices(root string) (devices []string, err error) {
 				return nil
 			}
 
+			devicePath := path
+
 			if fs.IsSymlink(path) {
 				symPath, err := fs.FollowSymlink(path)
 				if err != nil {
@@ -114,10 +116,10 @@ func findDevices(root string) (devices []string, err error) {
 					return nil
 				}
 
-				path = symPath
+				devicePath = symPath
 			}
 
-			if fs.IsDevice(path) {
+			if fs.IsDevice(devicePath) {
 				glog.V(2).Infof("Adding, %s to list.", path)
 				devices = append(devices, path)
 			} else {
