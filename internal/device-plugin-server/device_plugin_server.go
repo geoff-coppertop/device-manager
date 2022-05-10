@@ -244,12 +244,13 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 
 		glog.V(2).Infof("Adding watch on: %s", path)
 
-		err = watcher.Add(path)
-		if err != nil {
-			glog.Errorf("Failed to setup watcher: %v", err)
-			watcher.Close()
-			return err
-		}
+		// Consider using https://github.com/radovskyb/watcher instead of fsnotify
+		// err = watcher.Add(path)
+		// if err != nil {
+		// 	glog.Errorf("Failed to setup watcher: %v", err)
+		// 	watcher.Close()
+		// 	return err
+		// }
 	}
 
 	m.wg.Add(1)
