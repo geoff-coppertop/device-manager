@@ -44,19 +44,20 @@ func main() {
 		cancel()
 	}
 
+	errCh := make(chan error, len(devMappings))
+
 	for _, devMap := range devMappings {
-		dps := srv.NewDevicePluginServer(devMap.Paths, devMap.Group, &wg)
-		if err = dps.Run(ctx); err != nil {
-			cancel()
-			break
-		}
+		dps := srv.NewDevicePluginServer(devMap.Paths, devMap.Group)
+		dps.Run(ctx, &wg, errCh)
 	}
 
-	WaitProcess(ctx, cancel, &wg)
+	WaitProcess(ctx, &wg, cancel, errCh)
+
+	close(errCh)
 }
 
 // WaitProcess waits for all process to terminate and should be run as the last call in main
-func WaitProcess(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup) {
+func WaitProcess(ctx context.Context, wg *sync.WaitGroup, cancel context.CancelFunc, errCh <-chan error) {
 	glog.V(3).Info("Waiting")
 
 	select {
@@ -66,6 +67,10 @@ func WaitProcess(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGr
 
 	case <-ctx.Done():
 		glog.V(3).Info("ctx channel closed")
+
+	case err := <-errCh:
+		glog.Error(err)
+		cancel()
 	}
 
 	glog.V(3).Info("start waiting for everything to terminate")

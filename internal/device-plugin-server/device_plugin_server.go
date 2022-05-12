@@ -31,16 +31,17 @@ type DevicePluginServer struct {
 	resourceName string
 	server       *grpc.Server
 	restart      bool
-	wg           *sync.WaitGroup
+	wg           sync.WaitGroup
 	healthUpd    chan bool
+	err          chan error
 }
 
 // NewDevicePluginServer returns an initialized DevicePluginServer
-func NewDevicePluginServer(devicePaths []string, deviceGroupName string, wg *sync.WaitGroup) *DevicePluginServer {
+func NewDevicePluginServer(devicePaths []string, deviceGroupName string) *DevicePluginServer {
 	srv := DevicePluginServer{
 		resourceName: "device-plugin-server/" + deviceGroupName,
 		socket:       pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
-		wg:           wg,
+		err:          make(chan error),
 	}
 
 	glog.V(2).Infof("%s has %d paths", srv.resourceName, len(devicePaths))
@@ -60,31 +61,36 @@ func NewDevicePluginServer(devicePaths []string, deviceGroupName string, wg *syn
 }
 
 // Run makes the plugin go, plugin can be terminated using the provided context
-func (m *DevicePluginServer) Run(ctx context.Context) error {
+func (m *DevicePluginServer) Run(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error) {
 	glog.V(2).Info("Entering Run")
 
-	m.wg.Add(1)
+	wg.Add(1)
 
 	go func() {
-		defer m.wg.Done()
+		defer wg.Done()
 		defer m.stop()
 
 		glog.V(2).Info("Starting run thread")
 
+		m.restart = true
+
 		for {
-			m.restart = false
-			restartCtx, restartFunc := context.WithCancel(ctx)
+			var restartCtx context.Context
+			var restartFunc context.CancelFunc
 
-			glog.V(2).Info("Server starting...")
+			if m.restart {
+				m.restart = false
+				restartCtx, restartFunc = context.WithCancel(ctx)
 
-			if err := m.start(restartCtx, restartFunc); err != nil {
-				glog.Error(err)
+				glog.V(2).Info("Server starting...")
 
-				// There is the need to signal an error here...
-				return
+				err := m.start(restartCtx, restartFunc)
+				if err != nil {
+					m.err <- err
+				}
+
+				glog.V(2).Info("Server started.")
 			}
-
-			glog.V(2).Info("Server started.")
 
 			select {
 			case <-restartCtx.Done():
@@ -93,15 +99,26 @@ func (m *DevicePluginServer) Run(ctx context.Context) error {
 					continue
 				}
 
-				// Do we need to signal an error here?
+				glog.V(2).Info("Shutdown requested.")
+				err := m.stop()
+				if err != nil {
+					errCh <- err
+				}
 				return
+
+			case err := <-m.err:
+				glog.Error(err)
+				errCh <- err
+				restartFunc()
+				continue
 			}
 		}
+
+		m.wg.Wait()
+		close(m.err)
 	}()
 
 	glog.V(2).Info("Server running.")
-
-	return nil
 }
 
 // start sets up kubelet and device watchers and registers the plugin
@@ -184,7 +201,7 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 		err = watcher.Add(pluginapi.KubeletSocket)
 		if err != nil {
 			glog.Error(err)
-			// Need an error channel here to capture errors
+			m.err <- err
 			return
 		}
 
@@ -211,7 +228,6 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 		}
 	}()
 
-	// This should probably return an error channel
 	return nil
 }
 
@@ -276,6 +292,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 
 				initHealth, err := m.getDeviceHealth(event.Name)
 				if err != nil {
+					m.err <- err
 					return
 				}
 
@@ -294,6 +311,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 				}
 
 				if err := m.setDeviceHealth(event.Name, newHealth); err != nil {
+					m.err <- err
 					return
 				}
 
@@ -302,6 +320,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 				symPath, err := m.findDeviceSymlinkToPath(event.Name)
 				if err == nil {
 					if err := m.setDeviceHealth(symPath, newHealth); err != nil {
+						m.err <- err
 						return
 					}
 
