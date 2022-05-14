@@ -11,9 +11,9 @@ import (
 
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/golang/glog"
 	"github.com/google/uuid"
+	"github.com/radovskyb/watcher"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -184,44 +184,59 @@ func (m *DevicePluginServer) stop() error {
 func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart context.CancelFunc) error {
 	glog.V(2).Info("Creating kubelet watcher")
 
-	watcher, err := fsnotify.NewWatcher()
+	w := watcher.New()
+	w.FilterOps(watcher.Create)
+	w.SetMaxEvents(1)
+
+	glog.V(2).Info("Kubelet watcher created.")
+
+	err := w.Add(pluginapi.KubeletSocket)
 	if err != nil {
 		glog.Error(err)
 		return err
 	}
 
-	glog.V(2).Info("Kubelet watcher created.")
+	glog.V(2).Infof("Added watch on, %s", pluginapi.KubeletSocket)
+
+	// Start the watching process - it'll check for changes every 100ms.
+	if err := w.Start(time.Millisecond * 100); err != nil {
+		glog.Error(err)
+		w.Close()
+		return err
+	}
+
+	glog.V(2).Infof("Started watch on, %s", pluginapi.KubeletSocket)
 
 	m.wg.Add(1)
 
 	go func() {
 		defer m.wg.Done()
-		defer watcher.Close()
-
-		err = watcher.Add(pluginapi.KubeletSocket)
-		if err != nil {
-			glog.Error(err)
-			m.err <- err
-			return
-		}
-
-		glog.V(2).Infof("Added watch on, %s", pluginapi.KubeletSocket)
+		defer w.Close()
 
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		select {
-		case event := <-watcher.Events:
-			if event.Name == pluginapi.KubeletSocket && event.Op&fsnotify.Create == fsnotify.Create {
-				glog.V(2).Infof("inotify: %s created, restarting.", event.Name)
-				m.restart = true
-				restart()
+		case _, ok := <-w.Event:
+			if !ok {
+				return
 			}
 
-		case err := <-watcher.Errors:
-			glog.V(2).Infof("inotify: %s", err)
+			glog.V(2).Infof("%s created, restarting.", pluginapi.KubeletSocket)
 			m.restart = true
 			restart()
+
+		case err, ok := <-w.Error:
+			if !ok {
+				return
+			}
+
+			glog.V(2).Infof("%s, restarting.", err)
+			m.restart = true
+			restart()
+
+		case <-w.Closed:
+			return
 
 		case <-ctx.Done():
 			return
@@ -237,11 +252,9 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 	glog.V(2).Info("Creating device watcher")
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		glog.Error(err)
-		return err
-	}
+	w := watcher.New()
+	w.SetMaxEvents(1)
+	w.FilterOps(watcher.Create, watcher.Remove)
 
 	glog.V(2).Info("Device watcher created")
 
@@ -260,13 +273,19 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 
 		glog.V(2).Infof("Adding watch on: %s", path)
 
-		// Consider using https://github.com/radovskyb/watcher instead of fsnotify
-		// err = watcher.Add(path)
-		// if err != nil {
-		// 	glog.Errorf("Failed to setup watcher: %v", err)
-		// 	watcher.Close()
-		// 	return err
-		// }
+		err := w.Add(path)
+		if err != nil {
+			glog.Error(err)
+			w.Close()
+			return err
+		}
+	}
+
+	// Start the watching process - it'll check for changes every 100ms.
+	if err := w.Start(time.Millisecond * 100); err != nil {
+		glog.Error(err)
+		w.Close()
+		return err
 	}
 
 	m.wg.Add(1)
@@ -274,7 +293,7 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 	go func() {
 		defer m.wg.Done()
 		defer close(m.healthUpd)
-		defer watcher.Close()
+		defer w.Close()
 
 		m.healthUpd = make(chan bool)
 
@@ -287,48 +306,46 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 				m.healthUpd <- false
 				return
 
-			case event := <-watcher.Events:
-				glog.V(2).Infof("FS watch event for: %s", event.Name)
+			case err, ok := <-w.Error:
+				if !ok {
+					return
+				}
 
-				initHealth, err := m.getDeviceHealth(event.Name)
+				m.err <- err
+				return
+
+			case <-w.Closed:
+				return
+
+			case event, ok := <-w.Event:
+				if !ok {
+					return
+				}
+
+				path := event.Path
+				op := event.Op
+
+				glog.V(2).Infof("FS watch event for: %s", path)
+
+				var newHealth string
+
+				switch {
+				case op&watcher.Create == watcher.Create:
+					newHealth = pluginapi.Healthy
+
+				case op&watcher.Remove == watcher.Remove:
+					newHealth = pluginapi.Unhealthy
+
+				default:
+					glog.V(2).Infof("Device: %s, encountered: %d", path, op)
+					continue
+				}
+
+				err := m.updateDeviceHealth(newHealth, path)
 				if err != nil {
 					m.err <- err
 					return
 				}
-
-				var newHealth = initHealth
-
-				switch {
-				case event.Op&fsnotify.Create == fsnotify.Create:
-					newHealth = pluginapi.Healthy
-
-				case event.Op&fsnotify.Remove == fsnotify.Remove:
-					newHealth = pluginapi.Unhealthy
-
-				default:
-					glog.V(2).Infof("Device: %s, encountered: %d", event.Name, event.Op)
-					continue
-				}
-
-				if err := m.setDeviceHealth(event.Name, newHealth); err != nil {
-					m.err <- err
-					return
-				}
-
-				glog.V(2).Infof("Device: %s, was: %s, now %s", event.Name, initHealth, newHealth)
-
-				symPath, err := m.findDeviceSymlinkToPath(event.Name)
-				if err == nil {
-					if err := m.setDeviceHealth(symPath, newHealth); err != nil {
-						m.err <- err
-						return
-					}
-
-					glog.V(2).Infof("Device: %s, was: %s, now %s", symPath, initHealth, newHealth)
-				}
-
-				// Notify that there was a health update
-				m.healthUpd <- true
 			}
 		}
 	}()
@@ -481,6 +498,36 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 
 	glog.V(2).Infof("Device: %s, now: %s", path, health)
 	dev.device.Health = health
+	return nil
+}
+
+// updateDeviceHealth
+func (m *DevicePluginServer) updateDeviceHealth(health string, path string) error {
+	var paths []string
+
+	paths = append(paths, path)
+
+	symPath, err := m.findDeviceSymlinkToPath(path)
+	if err == nil {
+		paths = append(paths, symPath)
+	}
+
+	for _, p := range paths {
+		initHealth, err := m.getDeviceHealth(p)
+		if err != nil {
+			return err
+		}
+
+		if err := m.setDeviceHealth(p, health); err != nil {
+			return err
+		}
+
+		glog.V(2).Infof("Device: %s, was: %s, now %s", p, initHealth, health)
+	}
+
+	// Notify that there was a health update
+	m.healthUpd <- true
+
 	return nil
 }
 
