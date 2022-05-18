@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -25,26 +26,31 @@ type Device struct {
 	device *pluginapi.Device
 }
 
+type deviceMap struct {
+	hostPath      string
+	containerPath string
+}
+
 type DevicePluginServer struct {
-	devices      []Device
-	socket       string
-	resourceName string
-	server       *grpc.Server
-	restart      bool
-	wg           sync.WaitGroup
-	healthUpd    chan bool
-	err          chan error
+	devices   []Device
+	socket    string
+	groupName string
+	server    *grpc.Server
+	restart   bool
+	wg        sync.WaitGroup
+	healthUpd chan bool
+	err       chan error
 }
 
 // NewDevicePluginServer returns an initialized DevicePluginServer
 func NewDevicePluginServer(devicePaths []string, deviceGroupName string) *DevicePluginServer {
 	srv := DevicePluginServer{
-		resourceName: "device-plugin-server/" + deviceGroupName,
-		socket:       pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
-		err:          make(chan error),
+		groupName: deviceGroupName,
+		socket:    pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
+		err:       make(chan error),
 	}
 
-	glog.V(2).Infof("%s has %d paths", srv.resourceName, len(devicePaths))
+	glog.V(2).Infof("%s has %d paths", srv.groupName, len(devicePaths))
 	glog.V(3).Infof("Paths: %s", devicePaths)
 
 	for _, path := range devicePaths {
@@ -384,13 +390,15 @@ func (m *DevicePluginServer) register(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	glog.V(2).Infof("Making device plugin registration request for: %s", m.resourceName)
+	resourceName := "device-plugin-server/" + m.groupName
+
+	glog.V(2).Infof("Making device plugin registration request for: %s", resourceName)
 
 	client := pluginapi.NewRegistrationClient(conn)
 	req := &pluginapi.RegisterRequest{
 		Version:      pluginapi.Version,
 		Endpoint:     path.Base(m.socket),
-		ResourceName: m.resourceName,
+		ResourceName: resourceName,
 	}
 
 	glog.V(2).Info("Registering device plugin")
@@ -595,35 +603,61 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 	for _, containerReq := range req.ContainerRequests {
 		glog.V(2).Infof("Container is requesting %d device(s)", len(containerReq.DevicesIDs))
 
-		for _, id := range containerReq.DevicesIDs {
+		for idx, id := range containerReq.DevicesIDs {
 			dev, err := m.getDeviceById(id)
 			if err != nil {
 				return nil, err
 			}
 
-			var paths []string
+			var pathMaps []deviceMap
+			path := dev.path
 
 			glog.V(2).Infof("Adding %s to the container", dev.path)
 
-			paths = append(paths, dev.path)
+			// Symlinks are handled specially for two reasons,
+			//	1. 	usbfs doesn't play nice with symlinks so we need to recreate the host device path in
+			//			the container. This is handled by altering the path used in the non symlink case.
+			//	2.	because we can have several devices in a group on a host and we don't know which one
+			//			was mapped into the container we use the group name as the device name and append a
+			//			number of increasing order, starting at 0, so that we can use a consistent name in
+			//			the container
+			if fs.IsSymlink(path) {
+				dir := filepath.Dir(path)
 
-			if fs.IsSymlink(dev.path) {
-				symPath, err := fs.FollowSymlink(dev.path)
+				symPath, err := fs.FollowSymlink(path)
 				if err != nil {
 					return nil, err
 				}
 
-				paths = append(paths, symPath)
+				deviceName := fmt.Sprintf("%s%d", m.groupName, idx)
+
+				glog.V(3).Infof("New symlink device name: %s", deviceName)
+
+				newSymPath := filepath.Join(dir, deviceName)
+
+				glog.V(3).Infof("New symlink device path: %s", newSymPath)
+
+				pathMaps = append(pathMaps, deviceMap{
+					hostPath:      symPath,
+					containerPath: newSymPath,
+				})
+
+				path = symPath
 			}
+
+			pathMaps = append(pathMaps, deviceMap{
+				hostPath:      path,
+				containerPath: path,
+			})
 
 			containerResp := pluginapi.ContainerAllocateResponse{}
 
-			for _, path := range paths {
-				glog.V(2).Infof("path: %s", path)
+			for _, pathMap := range pathMaps {
+				glog.V(2).Infof("host: %s, container: %s", pathMap.hostPath, pathMap.containerPath)
 
 				containerResp.Devices = append(containerResp.Devices, &pluginapi.DeviceSpec{
-					ContainerPath: path,
-					HostPath:      path,
+					ContainerPath: pathMap.containerPath,
+					HostPath:      pathMap.hostPath,
 					Permissions:   "rw",
 				})
 			}
