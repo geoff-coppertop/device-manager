@@ -18,6 +18,7 @@ import (
 // init runs early to setup flag parsing which is used to configure logging
 func init() {
 	flag.Set("logtostderr", "true")
+	flag.Set("alsologtostderr", "true")
 	flag.Set("stderrthreshold", "WARNING")
 	flag.Set("v", "4")
 	flag.Parse()
@@ -34,7 +35,7 @@ func main() {
 	/* do the things */
 	cfg, err := cfg.ParseConfig("config/config.yml")
 	if err != nil {
-		glog.Error(err)
+		glog.Errorf("Error parsing config: %v", err)
 		cancel()
 	}
 	glog.V(3).Infof("\nConfig\n------\n%s\n", cfg.String())
@@ -69,7 +70,7 @@ func WaitProcess(ctx context.Context, wg *sync.WaitGroup, cancel context.CancelF
 		glog.V(3).Info("ctx channel closed")
 
 	case err := <-errCh:
-		glog.Error(err)
+		glog.Errorf("Error reported: %v", err)
 		cancel()
 	}
 

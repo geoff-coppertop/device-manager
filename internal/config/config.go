@@ -28,13 +28,11 @@ func ParseConfig(path string) (cfg Config, err error) {
 
 	yamlFile, err := os.ReadFile(path)
 	if err != nil {
-		glog.Error(err)
 		return Config{}, err
 	}
 
 	err = yaml.Unmarshal(yamlFile, &cfg)
 	if err != nil {
-		glog.Error(err)
 		return Config{}, err
 	}
 

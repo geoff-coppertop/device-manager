@@ -113,7 +113,7 @@ func (m *DevicePluginServer) Run(ctx context.Context, wg *sync.WaitGroup, errCh 
 				return
 
 			case err := <-m.err:
-				glog.Error(err)
+				glog.Errorf("DPS Error: %v", err)
 				errCh <- err
 				restartFunc()
 				continue
@@ -132,28 +132,24 @@ func (m *DevicePluginServer) start(ctx context.Context, restart context.CancelFu
 	glog.V(2).Info("Cleanup previous runs")
 
 	if err := m.stop(); err != nil {
-		glog.Error(err)
 		return err
 	}
 
 	glog.V(2).Info("Starting kubelet watcher")
 
 	if err := m.startKubeletWatcher(ctx, restart); err != nil {
-		glog.Error(err)
 		return err
 	}
 
 	glog.V(2).Info("Starting device watcher")
 
 	if err := m.startDeviceWatcher(ctx); err != nil {
-		glog.Error(err)
 		return err
 	}
 
 	glog.V(2).Info("Registering with Kubelet")
 
 	if err := m.register(ctx); err != nil {
-		glog.Error(err)
 		return err
 	}
 
@@ -176,7 +172,6 @@ func (m *DevicePluginServer) stop() error {
 	glog.V(2).Infof("Removing file socket file: %s", m.socket)
 
 	if err := os.Remove(m.socket); err != nil && !os.IsNotExist(err) {
-		glog.Error(err)
 		return err
 	}
 
@@ -198,18 +193,17 @@ func (m *DevicePluginServer) startKubeletWatcher(ctx context.Context, restart co
 
 	err := w.Add(pluginapi.KubeletSocket)
 	if err != nil {
-		glog.Error(err)
 		return err
 	}
 
 	glog.V(2).Infof("Added watch on, %s", pluginapi.KubeletSocket)
 
-	// Start the watching process - it'll check for changes every 100ms.
-	if err := w.Start(time.Millisecond * 100); err != nil {
-		glog.Error(err)
-		w.Close()
-		return err
-	}
+	go func() {
+		// Start the watching process - it'll check for changes every 100ms.
+		if err := w.Start(time.Millisecond * 100); err != nil {
+			m.err <- err
+		}
+	}()
 
 	glog.V(2).Infof("Started watch on, %s", pluginapi.KubeletSocket)
 
@@ -270,7 +264,6 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 		if fs.IsSymlink(path) {
 			symPath, err := fs.FollowSymlink(path)
 			if err != nil {
-				glog.Error(err)
 				return err
 			}
 
@@ -281,18 +274,17 @@ func (m *DevicePluginServer) startDeviceWatcher(ctx context.Context) error {
 
 		err := w.Add(path)
 		if err != nil {
-			glog.Error(err)
 			w.Close()
 			return err
 		}
 	}
 
-	// Start the watching process - it'll check for changes every 100ms.
-	if err := w.Start(time.Millisecond * 100); err != nil {
-		glog.Error(err)
-		w.Close()
-		return err
-	}
+	go func() {
+		// Start the watching process - it'll check for changes every 100ms.
+		if err := w.Start(time.Millisecond * 100); err != nil {
+			m.err <- err
+		}
+	}()
 
 	m.wg.Add(1)
 
@@ -483,7 +475,6 @@ func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
 func (m *DevicePluginServer) getDeviceHealth(path string) (string, error) {
 	dev, err := m.getDeviceByPath(path)
 	if err != nil {
-		glog.Error(err)
 		return "", err
 	}
 
@@ -500,7 +491,6 @@ func (m *DevicePluginServer) setDeviceHealth(path string, health string) error {
 
 	dev, err := m.getDeviceByPath(path)
 	if err != nil {
-		glog.Error(err)
 		return err
 	}
 
@@ -546,7 +536,6 @@ func (m *DevicePluginServer) findDeviceSymlinkToPath(path string) (string, error
 		if fs.IsSymlink(dev.path) {
 			symPath, err := fs.FollowSymlink(dev.path)
 			if err != nil {
-				glog.Error(err)
 				return "", err
 			}
 

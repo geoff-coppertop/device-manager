@@ -14,7 +14,7 @@ func IsDevice(path string) bool {
 
 	fi, err := os.Lstat(path)
 	if err != nil {
-		glog.Error(err)
+		glog.Errorf("Bad stat: %v", err)
 		return false
 	}
 
@@ -37,7 +37,7 @@ func IsSymlink(path string) bool {
 
 	fi, err := os.Lstat(path)
 	if err != nil {
-		glog.Error(err)
+		glog.Errorf("Bad stat: %v", err)
 		return false
 	}
 
@@ -56,14 +56,11 @@ func FollowSymlink(path string) (string, error) {
 	glog.V(3).Infof("FollowSymlink, path: %s", path)
 
 	if !IsSymlink(path) {
-		message := "not a symlink"
-		glog.Error(message)
-		return "", fmt.Errorf(message)
+		return "", fmt.Errorf("not a symlink")
 	}
 
 	symPath, err := os.Readlink(path)
 	if err != nil {
-		glog.Error(err)
 		return "", err
 	}
 
@@ -78,7 +75,6 @@ func FollowSymlink(path string) (string, error) {
 
 	_, err = os.Stat(symPath)
 	if err != nil {
-		glog.Error(err)
 		return "", err
 	}
 

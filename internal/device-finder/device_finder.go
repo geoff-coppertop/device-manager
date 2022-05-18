@@ -47,8 +47,7 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 		unfilteredDevs := rawDeviceMap[devMatch.Search]
 		filteredDevs, err := filterDevices(&unfilteredDevs, devMatch.Match)
 		if err != nil {
-			/* Something failed in the match checking */
-			glog.Error(err)
+			glog.Errorf("Something failed in the match checking: %v", err)
 			continue
 		}
 
