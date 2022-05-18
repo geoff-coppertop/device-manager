@@ -5,8 +5,6 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v2"
-
-	"github.com/golang/glog"
 )
 
 type DeviceMatch struct {
