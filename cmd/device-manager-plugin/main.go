@@ -48,7 +48,7 @@ func main() {
 	errCh := make(chan error, len(devMappings))
 
 	for _, devMap := range devMappings {
-		dps := srv.NewDevicePluginServer(devMap.Paths, devMap.Group)
+		dps := srv.NewDevicePluginServer(devMap.Paths, devMap.Group, devMap.MapSymPaths)
 		dps.Run(ctx, &wg, errCh)
 	}
 

@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 type DeviceMatch struct {
-	Match  []string
-	Group  string `yaml:",omitempty"`
-	Search string `yaml:",omitempty"`
+	Match       []string
+	Group       string `yaml:",omitempty"`
+	Search      string `yaml:",omitempty"`
+	MapSymPaths bool   `yaml:"mapsympaths,omitempty"`
 }
 
 type Config struct {

@@ -21,7 +21,7 @@ import (
 	fs "github.com/geoff-coppertop/device-manager-plugin/internal/util/fs"
 )
 
-type Device struct {
+type device struct {
 	path   string
 	device *pluginapi.Device
 }
@@ -32,18 +32,19 @@ type deviceMap struct {
 }
 
 type DevicePluginServer struct {
-	devices   []Device
-	socket    string
-	groupName string
-	server    *grpc.Server
-	restart   bool
-	wg        sync.WaitGroup
-	healthUpd chan bool
-	err       chan error
+	devices     []device
+	socket      string
+	groupName   string
+	mapSymPaths bool
+	server      *grpc.Server
+	restart     bool
+	wg          sync.WaitGroup
+	healthUpd   chan bool
+	err         chan error
 }
 
 // NewDevicePluginServer returns an initialized DevicePluginServer
-func NewDevicePluginServer(devicePaths []string, deviceGroupName string) *DevicePluginServer {
+func NewDevicePluginServer(devicePaths []string, deviceGroupName string, mapSymPaths bool) *DevicePluginServer {
 	srv := DevicePluginServer{
 		groupName: deviceGroupName,
 		socket:    pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
@@ -54,7 +55,7 @@ func NewDevicePluginServer(devicePaths []string, deviceGroupName string) *Device
 	glog.V(3).Infof("Paths: %s", devicePaths)
 
 	for _, path := range devicePaths {
-		srv.devices = append(srv.devices, Device{
+		srv.devices = append(srv.devices, device{
 			device: &pluginapi.Device{
 				ID:     uuid.NewString(),
 				Health: pluginapi.Healthy,
@@ -448,7 +449,7 @@ func (m *DevicePluginServer) getDeviceList() (devs []*pluginapi.Device) {
 }
 
 // getDeviceByPath returns a Device struct for the device with the matching path in the device list
-func (m *DevicePluginServer) getDeviceByPath(path string) (Device, error) {
+func (m *DevicePluginServer) getDeviceByPath(path string) (device, error) {
 	for _, dev := range m.devices {
 		if dev.path == path {
 			glog.V(2).Infof("Found device with path: %s", path)
@@ -456,11 +457,11 @@ func (m *DevicePluginServer) getDeviceByPath(path string) (Device, error) {
 		}
 	}
 
-	return Device{}, fmt.Errorf("device not found")
+	return device{}, fmt.Errorf("device not found")
 }
 
 // getDeviceById returns a Device struct for the device with the matching id in the device list
-func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
+func (m *DevicePluginServer) getDeviceById(id string) (dev device, err error) {
 	for _, d := range m.devices {
 		if d.device.ID == id {
 			glog.V(2).Infof("Found device with ID: %s", id)
@@ -468,7 +469,7 @@ func (m *DevicePluginServer) getDeviceById(id string) (dev Device, err error) {
 		}
 	}
 
-	return Device{}, fmt.Errorf("unknown device: %s", id)
+	return device{}, fmt.Errorf("unknown device: %s", id)
 }
 
 // setDeviceHealth returns the health of the device given by path in the device list
@@ -626,10 +627,12 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 
 				glog.V(3).Infof("New symlink device path: %s", newSymPath)
 
-				pathMaps = append(pathMaps, deviceMap{
-					hostPath:      symPath,
-					containerPath: newSymPath,
-				})
+				if m.mapSymPaths {
+					pathMaps = append(pathMaps, deviceMap{
+						hostPath:      symPath,
+						containerPath: newSymPath,
+					})
+				}
 
 				path = symPath
 			}

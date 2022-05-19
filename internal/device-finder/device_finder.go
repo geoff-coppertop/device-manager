@@ -14,8 +14,9 @@ import (
 )
 
 type DeviceMap struct {
-	Paths []string
-	Group string
+	Paths       []string
+	Group       string
+	MapSymPaths bool
 }
 
 func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
@@ -79,14 +80,14 @@ func GenerateDeviceMapping(cfg cfg.Config) ([]DeviceMap, error) {
 
 			glog.V(2).Infof("%d devices in group: %s", len(filteredDevs), group)
 
-			devMap = append(devMap, DeviceMap{Paths: filteredDevs, Group: group})
+			devMap = append(devMap, DeviceMap{Paths: filteredDevs, Group: group, MapSymPaths: devMatch.MapSymPaths})
 		} else {
 			for _, dev := range filteredDevs {
 				group := sanitizeName(strings.TrimPrefix(dev, devMatch.Search))
 
 				glog.V(2).Infof("%d devices in group: %s", 1, group)
 
-				devMap = append(devMap, DeviceMap{Paths: []string{dev}, Group: group})
+				devMap = append(devMap, DeviceMap{Paths: []string{dev}, Group: group, MapSymPaths: devMatch.MapSymPaths})
 			}
 		}
 	}
