@@ -46,9 +46,10 @@ type DevicePluginServer struct {
 // NewDevicePluginServer returns an initialized DevicePluginServer
 func NewDevicePluginServer(devicePaths []string, deviceGroupName string, mapSymPaths bool) *DevicePluginServer {
 	srv := DevicePluginServer{
-		groupName: deviceGroupName,
-		socket:    pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
-		err:       make(chan error),
+		groupName:   deviceGroupName,
+		socket:      pluginapi.DevicePluginPath + "dps-" + deviceGroupName + ".sock",
+		err:         make(chan error),
+		mapSymPaths: mapSymPaths,
 	}
 
 	glog.V(2).Infof("%s has %d paths", srv.groupName, len(devicePaths))
@@ -628,6 +629,8 @@ func (m *DevicePluginServer) Allocate(ctx context.Context, req *pluginapi.Alloca
 				glog.V(3).Infof("New symlink device path: %s", newSymPath)
 
 				if m.mapSymPaths {
+					glog.V(3).Infof("Skipping symlink device path: %s", newSymPath)
+
 					pathMaps = append(pathMaps, deviceMap{
 						hostPath:      symPath,
 						containerPath: newSymPath,
